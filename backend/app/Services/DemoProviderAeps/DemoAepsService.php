@@ -63,7 +63,7 @@ class DemoAepsService
             ]);
 
             if ($result->success && $txn->tran_type === 'CW') {
-                $meta = json_decode($service->meta, true) ?? [];
+                $meta = $service->meta ?? [];
                 $slabKey = $meta['charge_slab_key'] ?? null;
 
                 if ($slabKey) {
