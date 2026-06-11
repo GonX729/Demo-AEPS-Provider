@@ -27,6 +27,7 @@ class DemoAepsService
     public function __construct(
         private readonly DemoAepsProvider $provider,
         private readonly WalletService $wallet,
+        private readonly \App\Services\CommissionService $commissionService,
     ) {}
 
     /**
@@ -34,7 +35,7 @@ class DemoAepsService
      */
     public function handle(int $userId, array $data): AepsTransaction
     {
-        $this->assertServiceAvailable($userId);
+        $service = $this->assertServiceAvailable($userId);
 
         $txn = AepsTransaction::create([
             'user_id'        => $userId,
@@ -62,13 +63,33 @@ class DemoAepsService
             ]);
 
             if ($result->success && $txn->tran_type === 'CW') {
-                // ┌─────────────────────────────────────────────────────────┐
-                // │ COMMISSION / CHARGE LOGIC BELONGS HERE.                   │
-                // │ Before/at this credit, resolve the charge slab for the   │
-                // │ service (services.meta.charge_slab_key) + amount, then    │
-                // │ credit commission and/or debit charges as separate ledger │
-                // │ lines. See NOTE-commission-charges.md.                    │
-                // └─────────────────────────────────────────────────────────┘
+                $meta = json_decode($service->meta, true) ?? [];
+                $slabKey = $meta['charge_slab_key'] ?? null;
+
+                if ($slabKey) {
+                    $commissionAmount = $this->commissionService->calculate($slabKey, (float) $txn->amount);
+
+                    if ($commissionAmount > 0) {
+                        $this->wallet->credit(
+                            userId: $userId,
+                            amount: $commissionAmount,
+                            type: 'aeps',
+                            referenceType: AepsTransaction::class,
+                            referenceId: $txn->id,
+                            remarks: "AEPS CW Commission for txn {$txn->transaction_id}",
+                        );
+                    } elseif ($commissionAmount < 0) {
+                        $this->wallet->credit(
+                            userId: $userId,
+                            amount: $commissionAmount, // negative amount deducts balance
+                            type: 'aeps',
+                            referenceType: AepsTransaction::class,
+                            referenceId: $txn->id,
+                            remarks: "AEPS CW Charge for txn {$txn->transaction_id}",
+                        );
+                    }
+                }
+
                 $this->wallet->credit(
                     userId: $userId,
                     amount: (float) $txn->amount,
@@ -87,7 +108,7 @@ class DemoAepsService
      * Package/service check. Production version would also verify the user's
      * package grants this service; here we check the global service catalogue.
      */
-    private function assertServiceAvailable(int $userId): void
+    private function assertServiceAvailable(int $userId): Service
     {
         $service = Service::where('slug', self::SERVICE_SLUG)->first();
 
@@ -96,5 +117,7 @@ class DemoAepsService
                 "Service [" . self::SERVICE_SLUG . "] is not available or inactive."
             );
         }
+
+        return $service;
     }
 }
