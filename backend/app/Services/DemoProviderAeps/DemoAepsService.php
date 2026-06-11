@@ -51,7 +51,7 @@ class DemoAepsService
         $result = $this->provider->process($txn);
 
         // Persist provider outcome + (on success CW) credit the wallet atomically.
-        return DB::transaction(function () use ($txn, $result, $userId) {
+        return DB::transaction(function () use ($txn, $result, $userId, $service) {
             $txn->update([
                 'status'            => $result->success
                     ? AepsTransaction::STATUS_SUCCESS
